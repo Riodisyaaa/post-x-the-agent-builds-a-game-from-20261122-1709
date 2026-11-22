@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Star Catcher — built from one prompt</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0618; height: 100%; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1080" height="1920"></canvas>
+<script>
+"use strict";
+// STAR CATCHER — a tiny browser game.
+// Move the basket, catch the falling stars, don't let them hit the ground.
+// One prompt built this whole game. Play it: arrows / mouse / touch.
+
+// ---- deterministic RNG (fixed seed, so demo frames are reproducible) ----
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const W = 1080, H = 1920;
+const BASKET_Y = H - 260;
+const BASKET_W = 240;
+const GRAVITY_STAR = 1; // stars fall at constant speed (arcade style)
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// Background stars (twinkling), fixed layout from the same seed.
+const bgRng = mulberry32(777);
+const bgStars = [];
+for (let i = 0; i < 90; i++) {
+  bgStars.push({ x: bgRng() * W, y: bgRng() * (H - 300), r: 1 + bgRng() * 2.6, p: bgRng() * Math.PI * 2 });
+}
+
+function newGame() {
+  return {
+    basketX: W / 2,
+    targetX: W / 2,
+    stars: [],          // {x, y, vy, r, rot, spin}
+    parts: [],          // {x, y, vx, vy, life, max}
+    floats: [],         // {x, y, text, life}
+    score: 0,
+    caught: 0,
+    lives: 3,
+    spawnT: 0.4,        // seconds until next star
+    time: 0,
+    over: false,
+    started: false,
+    rng: mulberry32(20261122),
+  };
+}
+
+let G = newGame();
+
+function levelOf(g) { return 1 + Math.floor(g.caught / 8); }
+
+function spawnStar(g) {
+  const r = g.rng;
+  const speed = 560 + levelOf(g) * 45 + r() * 120;
+  g.stars.push({
+    x: 70 + r() * (W - 140),
+    y: -60,
+    vy: speed,
+    r: 34 + r() * 14,
+    rot: r() * Math.PI,
+    spin: (r() - 0.5) * 1.6,
+  });
+}
+
+function burst(g, x, y) {
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2 + g.rng() * 0.5;
+    const sp = 180 + g.rng() * 320;
+    g.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 120, life: 0.55, max: 0.55 });
+  }
+}
+
+// One fixed step of the game. Pure: same steps from a fresh game -> same state.
+function step(g, dt, auto) {
+  if (g.over) return;
+  g.time += dt;
+
+  // Basket: in demo/auto mode it chases the lowest star; live mode uses targetX.
+  if (auto) {
+    let best = null;
+    for (const s of g.stars) {
+      if (!best || s.y > best.y) best = s;
+    }
+    if (best) g.targetX = best.x;
+  }
+  const maxMove = 1500 * dt;
+  const dx = g.targetX - g.basketX;
+  g.basketX += Math.max(-maxMove, Math.min(maxMove, dx));
+  g.basketX = Math.max(BASKET_W / 2, Math.min(W - BASKET_W / 2, g.basketX));
+
+  // Spawn
+  g.spawnT -= dt;
+  if (g.spawnT <= 0) {
+    spawnStar(g);
+    g.spawnT = 0.45 + g.rng() * 0.3;
+  }
+
+  // Stars fall
+  for (let i = g.stars.length - 1; i >= 0; i--) {
+    const s = g.stars[i];
+    s.y += s.vy * dt;
+    s.rot += s.spin * dt;
+    const inBasketZone = s.y > BASKET_Y - 46 && s.y < BASKET_Y + 46;
+    if (inBasketZone && Math.abs(s.x - g.basketX) < BASKET_W / 2 + 10) {
+      g.stars.splice(i, 1);
+      g.score += 10;
+      g.caught += 1;
+      burst(g, s.x, BASKET_Y - 30);
+      g.floats.push({ x: s.x, y: BASKET_Y - 90, text: "+10", life: 0.8 });
+    } else if (s.y > H + 80) {
+      g.stars.splice(i, 1);
+      g.lives -= 1;
+      if (g.lives <= 0) g.over = true;
+    }
+  }
+
+  // Particles + floating texts
+  for (let i = g.parts.length - 1; i >= 0; i--) {
+    const p = g.parts[i];
+    p.life -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 500 * dt;
+    if (p.life <= 0) g.parts.splice(i, 1);
+  }
+  for (let i = g.floats.length - 1; i >= 0; i--) {
+    const f = g.floats[i];
+    f.life -= dt;
+    f.y -= 60 * dt;
+    if (f.life <= 0) g.floats.splice(i, 1);
+  }
+}
+
+function drawStar(cx, cy, r, rot) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const a = rot + (i * Math.PI) / 5 - Math.PI / 2;
+    const x = cx + Math.cos(a) * rad;
+    const y = cy + Math.sin(a) * rad;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function render(g, opts) {
+  opts = opts || {};
+  // Sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#241040");
+  sky.addColorStop(0.55, "#160a2b");
+  sky.addColorStop(1, "#0d0618");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Twinkling background stars
+  for (const s of bgStars) {
+    const tw = 0.35 + 0.65 * Math.abs(Math.sin(g.time * 1.6 + s.p));
+    ctx.globalAlpha = tw * 0.8;
+    ctx.fillStyle = "#cfe4ff";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Moon
+  ctx.fillStyle = "#ffe9a8";
+  ctx.beginPath();
+  ctx.arc(880, 210, 74, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f4cf6e";
+  ctx.beginPath();
+  ctx.arc(856, 190, 16, 0, Math.PI * 2);
+  ctx.arc(905, 232, 11, 0, Math.PI * 2);
+  ctx.fill();
+
+  // HUD: title + score + lives
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "800 44px 'DejaVu Sans', sans-serif";
+  ctx.fillText("STAR CATCHER", 48, 92);
+  ctx.fillStyle = "#ff5ea8";
+  ctx.font = "800 92px 'DejaVu Sans', sans-serif";
+  ctx.fillText(String(g.score), 48, 196);
+  ctx.fillStyle = "#b9a8d6";
+  ctx.font = "700 34px 'DejaVu Sans', sans-serif";
+  ctx.fillText("LEVEL " + levelOf(g) + "  •  " + g.caught + " CAUGHT", 48, 246);
+
+  ctx.textAlign = "right";
+  ctx.font = "64px 'DejaVu Sans', sans-serif";
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = i < g.lives ? "#ff4d6d" : "#4a3a5e";
+    ctx.fillText("♥", 1010 - i * 84, 108);
+  }
+
+  // Falling stars
+  for (const s of g.stars) {
+    ctx.save();
+    ctx.shadowColor = "#ffd54a";
+    ctx.shadowBlur = 26;
+    ctx.fillStyle = "#ffd54a";
+    drawStar(s.x, s.y, s.r, s.rot);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#fff3c4";
+    drawStar(s.x, s.y, s.r * 0.45, s.rot);
+    ctx.fill();
+  }
+
+  // Particles
+  for (const p of g.parts) {
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = "#ffd54a";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Floating +10s
+  ctx.textAlign = "center";
+  for (const f of g.floats) {
+    ctx.globalAlpha = Math.max(0, f.life / 0.8);
+    ctx.fillStyle = "#7dff9b";
+    ctx.font = "800 56px 'DejaVu Sans', sans-serif";
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // Basket
+  ctx.save();
+  ctx.shadowColor = "#ff2e7e";
+  ctx.shadowBlur = 30;
+  const bx = g.basketX - BASKET_W / 2;
+  ctx.fillStyle = "#ff2e7e";
+  ctx.beginPath();
+  ctx.moveTo(bx + 12, BASKET_Y - 34);
+  ctx.lineTo(bx + BASKET_W - 12, BASKET_Y - 34);
+  ctx.lineTo(bx + BASKET_W - 34, BASKET_Y + 52);
+  ctx.lineTo(bx + 34, BASKET_Y + 52);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "#ff7eb0";
+  ctx.fillRect(bx + 12, BASKET_Y - 34, BASKET_W - 24, 14);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "800 30px 'DejaVu Sans', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("CATCH!", g.basketX, BASKET_Y + 34);
+
+  // Ground line
+  ctx.fillStyle = "#2c1b4d";
+  ctx.fillRect(0, H - 130, W, 130);
+  ctx.fillStyle = "#3d2766";
+  ctx.fillRect(0, H - 130, W, 6);
+
+  if (opts.caption) {
+    ctx.fillStyle = "rgba(10, 5, 20, 0.72)";
+    roundRect(48, H - 470, W - 96, 92, 46);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 40px 'DejaVu Sans', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("playing live — built from one prompt", W / 2, H - 412);
+  }
+
+  if (!g.started && !opts.demo) {
+    ctx.fillStyle = "rgba(8, 4, 16, 0.66)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.font = "800 96px 'DejaVu Sans', sans-serif";
+    ctx.fillText("STAR CATCHER", W / 2, 820);
+    ctx.fillStyle = "#ff5ea8";
+    ctx.font = "700 46px 'DejaVu Sans', sans-serif";
+    ctx.fillText("catch the falling stars", W / 2, 900);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 44px 'DejaVu Sans', sans-serif";
+    ctx.fillText("move: mouse, touch or ← →", W / 2, 1010);
+    ctx.fillStyle = "#ffd54a";
+    ctx.font = "800 54px 'DejaVu Sans', sans-serif";
+    ctx.fillText("TAP TO PLAY", W / 2, 1130);
+  }
+
+  if (g.over) {
+    ctx.fillStyle = "rgba(8, 4, 16, 0.72)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.font = "800 100px 'DejaVu Sans', sans-serif";
+    ctx.fillText("GAME OVER", W / 2, 860);
+    ctx.fillStyle = "#ffd54a";
+    ctx.font = "800 72px 'DejaVu Sans', sans-serif";
+    ctx.fillText("SCORE " + g.score, W / 2, 970);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 44px 'DejaVu Sans', sans-serif";
+    ctx.fillText("tap to play again", W / 2, 1080);
+  }
+}
+
+// ---- modes: live play vs deterministic demo frame (?demo=1&f=N) ----
+const params = new URLSearchParams(location.search);
+const demoFrame = params.get("demo") === "1" ? parseInt(params.get("f") || "0", 10) : null;
+
+if (demoFrame !== null) {
+  // Demo: simulate the real game forward N fixed steps, then render once.
+  const g = newGame();
+  g.started = true;
+  const steps = Math.max(0, demoFrame);
+  for (let i = 0; i < steps; i++) step(g, 1 / 12, true);
+  render(g, { demo: true, caption: true });
+} else {
+  // Live: requestAnimationFrame loop, pointer + keyboard control.
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (G.started && !G.over) step(G, dt, false);
+    render(G, {});
+    requestAnimationFrame(loop);
+  }
+  function pointerTo(e) {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    G.targetX = x;
+  }
+  canvas.addEventListener("pointermove", pointerTo);
+  canvas.addEventListener("pointerdown", (e) => {
+    pointerTo(e);
+    if (!G.started || G.over) { G = newGame(); G.started = true; }
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") G.targetX = Math.max(BASKET_W / 2, G.targetX - 90);
+    if (e.key === "ArrowRight") G.targetX = Math.min(W - BASKET_W / 2, G.targetX + 90);
+    if ((e.key === " " || e.key === "Enter") && (!G.started || G.over)) { G = newGame(); G.started = true; }
+  });
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>

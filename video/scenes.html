@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video scenes — one prompt, one game</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0618; height: 100%; overflow: hidden; }
+  body { font-family: 'DejaVu Sans', sans-serif; color: #fff; }
+  .stage { width: 1080px; height: 1920px; position: relative; overflow: hidden;
+    background: linear-gradient(180deg, #241040 0%, #160a2b 55%, #0d0618 100%); }
+  .kicker { position: absolute; top: 150px; left: 80px; right: 80px; text-align: center;
+    color: #ff5ea8; font-size: 40px; font-weight: 800; letter-spacing: 6px; }
+  .big { position: absolute; left: 80px; right: 80px; top: 260px; text-align: center;
+    font-size: 118px; line-height: 1.12; font-weight: 800; }
+  .big .pink { color: #ff5ea8; }
+  .big .gold { color: #ffd54a; }
+  .bubble { position: absolute; left: 90px; right: 90px; top: 830px;
+    background: #2b1a4d; border-radius: 44px; padding: 52px 54px; }
+  .bubble .who { color: #b9a8d6; font-size: 34px; font-weight: 700; margin-bottom: 18px; }
+  .bubble .txt { font-size: 52px; line-height: 1.35; font-weight: 700; }
+  .bubble .caret { color: #ff5ea8; }
+  .sub { position: absolute; left: 80px; right: 80px; top: 1420px; text-align: center;
+    font-size: 52px; color: #d9cdf0; font-weight: 700; line-height: 1.4; }
+  .sub b { color: #ffd54a; }
+  /* terminal scene */
+  .term { position: absolute; left: 60px; right: 60px; top: 330px; height: 1080px;
+    background: #120a20; border: 3px solid #3d2766; border-radius: 36px; padding: 44px 48px; }
+  .term .bar { display: flex; align-items: center; gap: 18px; margin-bottom: 34px; }
+  .dot { width: 30px; height: 30px; border-radius: 50%; }
+  .term .title { color: #b9a8d6; font-size: 34px; font-weight: 700; margin-left: 12px; }
+  .line { font-family: 'DejaVu Sans Mono', monospace; font-size: 40px; line-height: 1.5;
+    color: #e8e2f5; white-space: pre-wrap; }
+  .line .ok { color: #7dff9b; }
+  .line .cmd { color: #ffd54a; }
+  .line .dim { color: #8f7fb5; }
+  .cursor { display: inline-block; width: 22px; height: 46px; background: #ff5ea8;
+    vertical-align: -6px; margin-left: 6px; }
+  .progress { position: absolute; left: 60px; right: 60px; top: 1470px; height: 34px;
+    background: #2c1b4d; border-radius: 17px; overflow: hidden; }
+  .progress .fill { height: 100%; background: linear-gradient(90deg, #ff2e7e, #ffd54a); }
+  .plabel { position: absolute; left: 60px; right: 60px; top: 1530px; text-align: center;
+    font-size: 44px; font-weight: 800; color: #fff; }
+  /* payoff scene */
+  .payoff { position: absolute; left: 80px; right: 80px; top: 560px; text-align: center; }
+  .payoff .l1 { font-size: 150px; font-weight: 800; }
+  .payoff .l2 { font-size: 92px; font-weight: 800; color: #ffd54a; margin-top: 40px; line-height: 1.2; }
+  .payoff .l3 { font-size: 58px; font-weight: 700; color: #d9cdf0; margin-top: 120px; line-height: 1.4; }
+  .payoff .l3 b { color: #ff5ea8; }
+  .badge { position: absolute; left: 0; right: 0; bottom: 170px; text-align: center;
+    font-size: 40px; font-weight: 800; letter-spacing: 4px; color: #b9a8d6; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage"></div>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+const scene = params.get("scene") || "prompt";
+const f = parseInt(params.get("f") || "0", 10);
+const stage = document.getElementById("stage");
+
+function el(html) {
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  return d.firstElementChild;
+}
+
+if (scene === "prompt") {
+  // Hook: the prompt, typed out in a chat bubble.
+  const prompt = "Build me a tiny browser game I can play right now.";
+  const shown = prompt.slice(0, Math.min(prompt.length, Math.floor(f * 1.6)));
+  const done = shown.length >= prompt.length;
+  const s = el('<div>' +
+    '<div class="kicker">MAKE.FUN &nbsp;•&nbsp; $20 BOUNTY</div>' +
+    '<div class="big">I gave my AI agent<br><span class="pink">ONE prompt</span>…</div>' +
+    '<div class="bubble"><div class="who">me → my agent</div>' +
+    '<div class="txt">“' + shown + (done ? '”' : '<span class="caret">▌</span>') + '</div></div>' +
+    (done ? '<div class="sub">…and just <b>watched</b> it work.</div>' : '') +
+    '</div>');
+  stage.appendChild(s);
+} else if (scene === "code") {
+  // The agent working: terminal lines appear one by one.
+  const lines = [
+    '<span class="cmd">$ makefun agent — build a game</span>',
+    '<span class="ok">✓</span> scaffolded index.html',
+    '<span class="ok">✓</span> canvas 1080 × 1920, night sky',
+    '<span class="ok">✓</span> basket + falling stars',
+    '<span class="ok">✓</span> score, lives, levels',
+    '<span class="ok">✓</span> playtested — <span class="cmd">it runs!</span>',
+  ];
+  const perLine = 9; // frames per line
+  const n = Math.min(lines.length, Math.floor(f / perLine) + 1);
+  const shown = lines.slice(0, n).join("\n");
+  const pct = Math.min(100, Math.round(((f + 1) / (lines.length * perLine)) * 100));
+  const s = el('<div>' +
+    '<div class="kicker">THE AGENT IS WORKING…</div>' +
+    '<div class="term"><div class="bar">' +
+    '<div class="dot" style="background:#ff5f57"></div>' +
+    '<div class="dot" style="background:#febc2e"></div>' +
+    '<div class="dot" style="background:#28c840"></div>' +
+    '<span class="title">agent — building your game</span></div>' +
+    '<div class="line">' + shown + '<span class="cursor"></span></div></div>' +
+    '<div class="progress"><div class="fill" style="width:' + pct + '%"></div></div>' +
+    '<div class="plabel">' + (pct >= 100 ? 'DONE — game built ✓' : 'building… ' + pct + '%') + '</div>' +
+    '</div>');
+  stage.appendChild(s);
+} else if (scene === "payoff") {
+  // Payoff: it works, come build.
+  const show2 = f >= 10, show3 = f >= 22;
+  const s = el('<div>' +
+    '<div class="payoff">' +
+    '<div class="l1">It works.</div>' +
+    (show2 ? '<div class="l2">One prompt.<br>One game.</div>' : '') +
+    (show3 ? '<div class="l3">Come build on <b>make.fun</b><br>— and win real money.</div>' : '') +
+    '</div>' +
+    '<div class="badge">MAKE.FUN</div>' +
+    '</div>');
+  stage.appendChild(s);
+}
+</script>
+</body>
+</html>
